@@ -1,0 +1,30 @@
+# Render Blueprint: one free web service for the backend.
+# Secrets are marked sync: false, so Render asks for them when the Blueprint is created.
+services:
+  - type: web
+    name: ai-call-agent
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: claude/novo-app-repo-959737
+    rootDir: backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TEST_CALL_TOKEN
+        generateValue: true
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TEST_PHONE_NUMBER
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AGENT_USER_NAME
+        sync: false

@@ -48,7 +48,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   return {
     port: Number(env.PORT ?? 3000),
-    publicBaseUrl: required(env, "PUBLIC_BASE_URL").replace(/\/+$/, ""),
+    // Render sets RENDER_EXTERNAL_URL automatically, so PUBLIC_BASE_URL is optional there.
+    publicBaseUrl: required(
+      env.PUBLIC_BASE_URL ? env : { PUBLIC_BASE_URL: env.RENDER_EXTERNAL_URL },
+      "PUBLIC_BASE_URL",
+    ).replace(/\/+$/, ""),
     testCallToken: required(env, "TEST_CALL_TOKEN"),
     twilio: {
       accountSid: required(env, "TWILIO_ACCOUNT_SID"),

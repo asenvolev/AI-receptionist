@@ -130,3 +130,13 @@ describe("Twilio webhooks", () => {
     expect(good.status).toBe(200);
   });
 });
+
+describe("GET /", () => {
+  it("serves the phone-friendly trigger page without exposing the token", async () => {
+    const { app } = setup();
+    const res = await request(app).get("/");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Звънни ми");
+    expect(res.text).not.toContain("secret");
+  });
+});

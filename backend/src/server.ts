@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import twilio from "twilio";
 import type { Agent } from "./agent.js";
 import type { Config } from "./config.js";
+import { testCallPage } from "./page.js";
 import { ConversationStore, createConversation, type Conversation } from "./conversation.js";
 
 const { VoiceResponse } = twilio.twiml;
@@ -88,6 +89,10 @@ export function createApp({ config, agent, placeCall, store = new ConversationSt
     console.warn(`[twilio] rejected request with invalid signature: ${req.originalUrl}`);
     res.status(403).send("Invalid Twilio signature");
   };
+
+  app.get("/", (_req, res) => {
+    res.type("html").send(testCallPage(config.agent.defaultTask));
+  });
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
