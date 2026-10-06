@@ -15,10 +15,13 @@ export interface Config {
     model: string;
     effort: "low" | "medium" | "high" | "xhigh" | "max";
   };
+  /** Optional ConversationRelay overrides; unset means Twilio's defaults for bg-BG. */
   voice: {
-    ttsVoice: string;
+    ttsProvider?: string;
+    voice?: string;
+    transcriptionProvider?: string;
     speechModel?: string;
-    speechTimeout: string;
+    hints?: string;
   };
   agent: {
     userName: string;
@@ -66,9 +69,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       effort: effort as Config["anthropic"]["effort"],
     },
     voice: {
-      ttsVoice: env.TTS_VOICE ?? "Google.bg-BG-Standard-A",
+      ttsProvider: env.TTS_PROVIDER || undefined,
+      voice: env.TTS_VOICE || undefined,
+      transcriptionProvider: env.STT_PROVIDER || undefined,
       speechModel: env.STT_SPEECH_MODEL || undefined,
-      speechTimeout: env.STT_SPEECH_TIMEOUT ?? "auto",
+      hints: env.STT_HINTS || undefined,
     },
     agent: {
       userName: env.AGENT_USER_NAME ?? "Иван Петров",

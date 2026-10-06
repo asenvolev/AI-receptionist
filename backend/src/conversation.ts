@@ -17,8 +17,8 @@ export interface Conversation {
   transcript: TranscriptLine[];
   /** Number of callee turns answered by the agent. */
   turns: number;
-  /** Consecutive gathers that returned no speech. */
-  silentStreak: number;
+  /** What the callee heard of the agent's last reply before talking over it. */
+  pendingInterruption?: string;
   callSid?: string;
   createdAt: number;
 }
@@ -50,9 +50,31 @@ export function createConversation(task: string, userName: string): Conversation
     ],
     transcript: [{ speaker: "agent", text: greeting }],
     turns: 0,
-    silentStreak: 0,
     createdAt: Date.now(),
   };
+}
+
+/**
+ * Adds the callee's words as the next user turn. If the previous reply was
+ * aborted (so no assistant turn followed), the words join the trailing user
+ * turn instead; that turn has no later thinking blocks, so changing it keeps
+ * the rest of the history append-only.
+ */
+export function addCalleeTurn(conversation: Conversation, speech: string): void {
+  let text = speech;
+  if (conversation.pendingInterruption !== undefined) {
+    const heard = conversation.pendingInterruption.trim();
+    text = heard
+      ? `[Прекъснаха те. От последната ти реплика чуха само: „${heard}“] ${speech}`
+      : `[Прекъснаха те, преди да чуят последната ти реплика.] ${speech}`;
+    conversation.pendingInterruption = undefined;
+  }
+  const last = conversation.messages.at(-1);
+  if (last?.role === "user" && typeof last.content === "string") {
+    last.content = `${last.content} ${text}`;
+  } else {
+    conversation.messages.push({ role: "user", content: text });
+  }
 }
 
 const MAX_AGE_MS = 60 * 60 * 1000;

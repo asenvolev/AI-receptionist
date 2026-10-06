@@ -12,7 +12,7 @@
 ## Архитектура
 - Mobile: React Native + Expo + TypeScript. Въвеждане на задача, транскрипция на живо, одобрения, достъп до календара.
 - Backend: Node + TypeScript. Изходящи обаждания през Twilio.
-- Глас: реч→текст → Claude API → текст→реч, чрез Vapi, Retell или LiveKit Agents с Claude като модел.
+- Глас: реч→текст → Claude API → текст→реч. Текущо: Twilio ConversationRelay (поточно, с прекъсване) + Claude. Алтернативи за сравнение: Vapi, Retell, LiveKit Agents.
 - Инструменти на агента по време на разговор: check_calendar, request_user_approval, end_call, save_result.
 
 ## Задължителни изисквания

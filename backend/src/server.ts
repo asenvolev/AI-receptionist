@@ -1,12 +1,19 @@
+import { createServer, type Server } from "node:http";
 import express, { type NextFunction, type Request, type Response } from "express";
 import twilio from "twilio";
+import { WebSocketServer } from "ws";
 import type { Agent } from "./agent.js";
 import type { Config } from "./config.js";
+import { ConversationStore, createConversation } from "./conversation.js";
 import { testCallPage } from "./page.js";
-import { ConversationStore, createConversation, type Conversation } from "./conversation.js";
+import { handleRelaySocket } from "./relay.js";
 
 const { VoiceResponse } = twilio.twiml;
-type SayAttributes = Parameters<twilio.twiml.VoiceResponse["say"]>[0];
+
+export const RELAY_PATH = "/relay";
+
+/** Hard cap on call length so a stuck call can't run up the bill. */
+const CALL_TIME_LIMIT_SECONDS = 5 * 60;
 
 export interface PlaceCallParams {
   to: string;
@@ -25,6 +32,7 @@ export function twilioPlaceCall(config: Config["twilio"]): PlaceCall {
       ...params,
       statusCallbackEvent: ["completed"],
       statusCallbackMethod: "POST",
+      timeLimit: CALL_TIME_LIMIT_SECONDS,
     });
 }
 
@@ -35,9 +43,7 @@ export interface AppDeps {
   store?: ConversationStore;
 }
 
-const MAX_SILENT_GATHERS = 2;
-
-export function createApp({ config, agent, placeCall, store = new ConversationStore() }: AppDeps) {
+export function createApp({ config, placeCall, store = new ConversationStore() }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json());
@@ -46,37 +52,14 @@ export function createApp({ config, agent, placeCall, store = new ConversationSt
   const url = (path: string, conversationId: string) =>
     `${config.publicBaseUrl}${path}?cid=${encodeURIComponent(conversationId)}`;
 
-  const sayAttributes: SayAttributes = {
-    // Not limited to the voices typed in the SDK; Twilio adds new ones over time.
-    voice: config.voice.ttsVoice as NonNullable<SayAttributes>["voice"],
-    language: "bg-BG",
-  };
-
-  /** Speak `text`, then listen for the callee's answer. */
-  const sayAndListen = (conversation: Conversation, text: string) => {
-    const twiml = new VoiceResponse();
-    const gather = twiml.gather({
-      input: ["speech"],
-      language: "bg-BG",
-      action: url("/twilio/gather", conversation.id),
-      method: "POST",
-      actionOnEmptyResult: true,
-      speechTimeout: config.voice.speechTimeout,
-      ...(config.voice.speechModel ? { speechModel: config.voice.speechModel } : {}),
-    });
-    gather.say(sayAttributes, text);
-    return twiml;
-  };
-
-  const sayAndHangUp = (text: string) => {
-    const twiml = new VoiceResponse();
-    twiml.say(sayAttributes, text);
-    twiml.hangup();
-    return twiml;
-  };
-
   const sendTwiml = (res: Response, twiml: twilio.twiml.VoiceResponse) => {
     res.type("text/xml").send(twiml.toString());
+  };
+
+  const hangUp = () => {
+    const twiml = new VoiceResponse();
+    twiml.hangup();
+    return twiml;
   };
 
   const requireTwilioSignature = (req: Request, res: Response, next: NextFunction) => {
@@ -128,61 +111,41 @@ export function createApp({ config, agent, placeCall, store = new ConversationSt
     }
   });
 
-  // Twilio fetches this when the callee picks up.
+  // Twilio fetches this when the callee picks up: hand the call to ConversationRelay.
   app.post("/twilio/voice", requireTwilioSignature, (req, res) => {
     const conversation = store.get(req.query.cid as string | undefined);
     if (!conversation) {
-      sendTwiml(res, sayAndHangUp("Извинете, грешка в обаждането. Довиждане!"));
+      sendTwiml(res, hangUp());
       return;
     }
-    const greeting = conversation.transcript[0]!.text;
-    sendTwiml(res, sayAndListen(conversation, greeting));
+    const twiml = new VoiceResponse();
+    const connect = twiml.connect({ action: url("/twilio/relay-done", conversation.id), method: "POST" });
+    const relay = connect.conversationRelay({
+      url: `${config.publicBaseUrl.replace(/^http/, "ws")}${RELAY_PATH}`,
+      language: "bg-BG",
+      // Fixed AI disclosure, spoken in full before the callee can talk over it.
+      welcomeGreeting: conversation.transcript[0]!.text,
+      welcomeGreetingInterruptible: "none",
+      interruptible: "speech",
+      ...(config.voice.ttsProvider ? { ttsProvider: config.voice.ttsProvider } : {}),
+      ...(config.voice.voice ? { voice: config.voice.voice } : {}),
+      ...(config.voice.transcriptionProvider
+        ? { transcriptionProvider: config.voice.transcriptionProvider }
+        : {}),
+      ...(config.voice.speechModel ? { speechModel: config.voice.speechModel } : {}),
+      ...(config.voice.hints ? { hints: config.voice.hints } : {}),
+    });
+    relay.parameter({ name: "cid", value: conversation.id });
+    sendTwiml(res, twiml);
   });
 
-  // Twilio posts the recognized speech here after each <Gather>.
-  app.post("/twilio/gather", requireTwilioSignature, async (req, res) => {
-    const conversation = store.get(req.query.cid as string | undefined);
-    if (!conversation) {
-      sendTwiml(res, sayAndHangUp("Извинете, грешка в обаждането. Довиждане!"));
-      return;
-    }
-
-    const speech = typeof req.body.SpeechResult === "string" ? req.body.SpeechResult.trim() : "";
-    if (!speech) {
-      conversation.silentStreak += 1;
-      if (conversation.silentStreak > MAX_SILENT_GATHERS) {
-        sendTwiml(res, sayAndHangUp("Не ви чувам добре. Ще се обадим отново. Довиждане!"));
-        return;
-      }
-      sendTwiml(res, sayAndListen(conversation, "Извинете, не ви чух. Бихте ли повторили?"));
-      return;
-    }
-
-    conversation.silentStreak = 0;
-    const confidence = Number(req.body.Confidence);
-    conversation.transcript.push({
-      speaker: "callee",
-      text: speech,
-      ...(Number.isFinite(confidence) ? { confidence } : {}),
-    });
-    console.log(`[call] ${conversation.id} callee (${req.body.Confidence ?? "?"}): ${speech}`);
-
-    conversation.messages.push({ role: "user", content: speech });
-    conversation.turns += 1;
-
-    const reply = await agent.reply(conversation);
-    conversation.transcript.push({ speaker: "agent", text: reply.say });
-    console.log(`[call] ${conversation.id} agent: ${reply.say}${reply.endCall ? " [end_call]" : ""}`);
-
-    if (reply.endCall) {
-      sendTwiml(res, sayAndHangUp(reply.say));
-    } else if (conversation.turns >= config.agent.maxTurns) {
-      const closing = "Ще трябва да приключа разговора. Благодаря ви, довиждане!";
-      conversation.transcript.push({ speaker: "agent", text: closing });
-      sendTwiml(res, sayAndHangUp(`${reply.say} ${closing}`));
-    } else {
-      sendTwiml(res, sayAndListen(conversation, reply.say));
-    }
+  // Twilio calls this when the relay session ends (we sent "end", or an error).
+  app.post("/twilio/relay-done", requireTwilioSignature, (req, res) => {
+    console.log(
+      `[call] ${req.query.cid} relay ended: status=${req.body.SessionStatus ?? "?"} ` +
+        `handoff=${req.body.HandoffData ?? "-"}${req.body.ErrorMessage ? ` error=${req.body.ErrorMessage}` : ""}`,
+    );
+    sendTwiml(res, hangUp());
   });
 
   app.post("/twilio/status", requireTwilioSignature, (req, res) => {
@@ -200,4 +163,15 @@ export function createApp({ config, agent, placeCall, store = new ConversationSt
   });
 
   return app;
+}
+
+/** HTTP server with the Express app plus the ConversationRelay WebSocket endpoint. */
+export function createAppServer(deps: AppDeps): Server {
+  const store = deps.store ?? new ConversationStore();
+  const server = createServer(createApp({ ...deps, store }));
+  const wss = new WebSocketServer({ server, path: RELAY_PATH });
+  // The socket is only useful with a valid conversation id, which is an
+  // unguessable UUID that Twilio receives from our signed webhook response.
+  wss.on("connection", (ws) => handleRelaySocket(ws, { store, agent: deps.agent, config: deps.config }));
+  return server;
 }

@@ -3,20 +3,32 @@ import type { Config } from "./config.js";
 import type { Conversation } from "./conversation.js";
 
 export interface AgentReply {
+  /** Everything the agent said this turn (already streamed through onText). */
   say: string;
   endCall: boolean;
+  /** Short result summary from end_call, when the agent ended the call. */
+  outcome?: string;
+}
+
+export interface RespondOptions {
+  /** Called with each text chunk as soon as Claude produces it. */
+  onText: (text: string) => void;
+  signal: AbortSignal;
 }
 
 export interface Agent {
-  /** Generates the next spoken line. The callee's latest words must already be in conversation.messages. */
-  reply(conversation: Conversation): Promise<AgentReply>;
+  /**
+   * Streams the next spoken reply. The callee's latest words must already be in
+   * conversation.messages. Resolves to null when aborted (the callee interrupted).
+   */
+  respond(conversation: Conversation, options: RespondOptions): Promise<AgentReply | null>;
 }
 
 const END_CALL_TOOL: Anthropic.Beta.BetaTool = {
   name: "end_call",
   description:
     "Затваря телефона. Извикай го, когато разговорът е приключил: часът е записан и потвърден, " +
-    "няма подходящ час, или отсреща искат да приключат. Сбогуването кажи в текста на същия отговор.",
+    "няма подходящ час, или отсреща искат да приключат. Сбогуването кажи в текста на същия отговор, преди извикването.",
   input_schema: {
     type: "object",
     properties: {
@@ -28,7 +40,7 @@ const END_CALL_TOOL: Anthropic.Beta.BetaTool = {
     required: ["outcome"],
     additionalProperties: false,
   },
-  strict: true,
+  eager_input_streaming: true,
 };
 
 export function systemPrompt(conversation: Conversation): string {
@@ -39,6 +51,7 @@ export function systemPrompt(conversation: Conversation): string {
 Контекст:
 - В началото на разговора вече си се представил като AI асистент. Ако те попитат дали си човек или робот, винаги отговаряй честно, че си AI асистент.
 - Съобщенията от потребителя са думите на човека отсреща, автоматично разпознати от реч. Може да съдържат грешки. Ако нещо е неясно или звучи странно, помоли учтиво да повторят или потвърди какво си разбрал.
+- Ако отсреща те прекъснат, в съобщението ще има бележка в квадратни скоби коя част от репликата ти са чули. Продължи естествено оттам.
 - В този тест нямаш достъп до календара. Приемай час само ако е в рамките на наличността от задачата.
 
 Как говориш:
@@ -53,7 +66,6 @@ export function systemPrompt(conversation: Conversation): string {
 - Когато разговорът приключи, кажи кратко сбогуване и извикай end_call в същия отговор.`;
 }
 
-const FALLBACK_LINE = "Извинете, бихте ли повторили?";
 const GOODBYE_LINE = "Благодаря ви, довиждане!";
 const ERROR_LINE = "Извинете, имам технически проблем. Ще се обадим отново. Довиждане!";
 
@@ -67,52 +79,63 @@ export class ClaudeAgent implements Agent {
     this.client = client ?? new Anthropic();
   }
 
-  async reply(conversation: Conversation): Promise<AgentReply> {
+  async respond(conversation: Conversation, { onText, signal }: RespondOptions): Promise<AgentReply | null> {
+    let spoken = "";
     let response: Anthropic.Beta.BetaMessage;
     try {
-      response = await this.client.beta.messages.create({
-        model: this.config.model,
-        max_tokens: 4000,
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: this.config.effort },
-        system: systemPrompt(conversation),
-        tools: [END_CALL_TOOL],
-        messages: conversation.messages,
+      const stream = this.client.beta.messages.stream(
+        {
+          model: this.config.model,
+          max_tokens: 4000,
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: "default",
+          output_config: { effort: this.config.effort },
+          system: systemPrompt(conversation),
+          tools: [END_CALL_TOOL],
+          messages: conversation.messages,
+        },
+        { signal },
+      );
+      stream.on("text", (text) => {
+        spoken += text;
+        onText(text);
       });
+      response = await stream.finalMessage();
     } catch (error) {
+      if (signal.aborted || error instanceof Anthropic.APIUserAbortError) return null;
       if (error instanceof Anthropic.APIError) {
         console.error(`[agent] Claude API error ${error.status}: ${error.message}`);
       } else {
         console.error("[agent] Claude request failed:", error);
       }
-      return { say: ERROR_LINE, endCall: true };
+      return this.speak(spoken, ERROR_LINE, onText, true);
     }
 
     if (response.stop_reason === "refusal") {
       console.error("[agent] Claude refused:", response.stop_details);
-      return { say: ERROR_LINE, endCall: true };
+      return this.speak(spoken, ERROR_LINE, onText, true);
     }
 
     // Keep the full content (thinking blocks included) so history stays append-only.
     conversation.messages.push({ role: "assistant", content: response.content });
 
-    const text = response.content
-      .flatMap((block) => (block.type === "text" ? [block.text.trim()] : []))
-      .filter(Boolean)
-      .join(" ");
-    const endCall = response.content.some(
-      (block) => block.type === "tool_use" && block.name === "end_call",
+    const endCallBlock = response.content.find(
+      (block): block is Anthropic.Beta.BetaToolUseBlock =>
+        block.type === "tool_use" && block.name === "end_call",
     );
-
-    if (endCall) {
-      const outcome = response.content.find(
-        (block): block is Anthropic.Beta.BetaToolUseBlock =>
-          block.type === "tool_use" && block.name === "end_call",
-      )?.input;
-      console.log(`[agent] end_call ${conversation.id}:`, outcome);
+    if (!endCallBlock) {
+      return { say: spoken.trim(), endCall: false };
     }
+    const input = endCallBlock.input as { outcome?: unknown } | null;
+    const outcome = typeof input?.outcome === "string" ? input.outcome : undefined;
+    if (!spoken.trim()) return { ...this.speak(spoken, GOODBYE_LINE, onText, true), outcome };
+    return { say: spoken.trim(), endCall: true, outcome };
+  }
 
-    return { say: text || (endCall ? GOODBYE_LINE : FALLBACK_LINE), endCall };
+  /** Appends a fixed line to whatever was already streamed this turn. */
+  private speak(spoken: string, line: string, onText: (text: string) => void, endCall: boolean): AgentReply {
+    const chunk = spoken.trim() ? ` ${line}` : line;
+    onText(chunk);
+    return { say: (spoken + chunk).trim(), endCall };
   }
 }
