@@ -4,7 +4,13 @@ import twilio from "twilio";
 import { WebSocketServer } from "ws";
 import type { Agent } from "./agent.js";
 import type { Config } from "./config.js";
-import { addCalleeTurn, ConversationStore, createConversation, type Conversation } from "./conversation.js";
+import {
+  addCalleeTurn,
+  ConversationStore,
+  createConversation,
+  finishCall,
+  type Conversation,
+} from "./conversation.js";
 import { recentLogs } from "./logs.js";
 import { testCallPage } from "./page.js";
 import { handleRelaySocket } from "./relay.js";
@@ -177,6 +183,21 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
     res.json({ lines: recentLogs(), twilioAlerts });
   });
 
+  // Live status, transcript and result of one test call, for the page.
+  app.get("/calls/:id", (req, res) => {
+    if (!isAuthorized(req)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    const conversation = store.get(req.params.id);
+    if (!conversation) {
+      res.status(404).json({ error: "unknown call" });
+      return;
+    }
+    const { status, outcome, endReason, transcript, task } = conversation;
+    res.json({ status, outcome, endReason, transcript, task });
+  });
+
   app.post("/test-call", async (req, res) => {
     if (!isAuthorized(req)) {
       res.status(401).json({ error: "unauthorized" });
@@ -222,6 +243,7 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
       return;
     }
     if (config.voice.mode === "gather") {
+      conversation.status = "in-progress";
       console.log(`[call] ${conversation.id} answered; gather mode`);
       sendTwiml(res, sayAndListen(conversation, conversation.transcript[0]!.text));
       return;
@@ -244,6 +266,7 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
       ...(config.voice.hints ? { hints: config.voice.hints } : {}),
     });
     relay.parameter({ name: "cid", value: conversation.id });
+    conversation.status = "in-progress";
     console.log(`[call] ${conversation.id} answered; connecting ConversationRelay to ${config.publicBaseUrl.replace(/^http/, "ws")}${RELAY_PATH}`);
     sendTwiml(res, twiml);
   });
@@ -260,6 +283,7 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
     if (!speech) {
       conversation.silentStreak = (conversation.silentStreak ?? 0) + 1;
       if (conversation.silentStreak > MAX_SILENT_GATHERS) {
+        finishCall(conversation, { endReason: "Отсреща не отговаряше (тишина)." });
         sendTwiml(res, hangUp("Не ви чувам добре. Ще се обадим отново. Довиждане!"));
       } else {
         sendTwiml(res, sayAndListen(conversation, "Извинете, не ви чух. Бихте ли повторили?"));
@@ -280,6 +304,7 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
 
     const reply = await agent.respond(conversation, { onText: () => {}, signal: new AbortController().signal });
     if (!reply) {
+      finishCall(conversation, { endReason: "Грешка при генериране на отговор." });
       sendTwiml(res, hangUp());
       return;
     }
@@ -290,7 +315,15 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
     console.log(`[call] ${conversation.id} agent: ${spoken}${reply.endCall ? " [end_call]" : ""}`);
     if (reply.outcome) console.log(`[call] ${conversation.id} outcome: ${reply.outcome}`);
 
-    sendTwiml(res, reply.endCall || atTurnLimit ? hangUp(spoken) : sayAndListen(conversation, spoken));
+    if (reply.endCall || atTurnLimit) {
+      finishCall(conversation, {
+        outcome: reply.outcome,
+        endReason: atTurnLimit ? "Достигнат е лимитът от реплики." : "Агентът приключи разговора.",
+      });
+      sendTwiml(res, hangUp(spoken));
+    } else {
+      sendTwiml(res, sayAndListen(conversation, spoken));
+    }
   });
 
   // Twilio calls this when the relay session ends (we sent "end", or an error).
@@ -299,6 +332,8 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
       `[call] ${req.query.cid} relay ended: status=${req.body.SessionStatus ?? "?"} ` +
         `handoff=${req.body.HandoffData ?? "-"}${req.body.ErrorMessage ? ` error=${req.body.ErrorMessage}` : ""}`,
     );
+    const conversation = store.get(req.query.cid as string | undefined);
+    if (conversation) finishCall(conversation, { endReason: "Разговорът приключи." });
     sendTwiml(res, hangUp());
   });
 
@@ -311,7 +346,8 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
             .map((line) => `  ${line.speaker === "agent" ? "AI" : "Отсреща"}: ${line.text}`)
             .join("\n"),
       );
-      store.delete(conversation.id);
+      // Kept (not deleted) so the page can still show the result; the store prunes old calls.
+      finishCall(conversation, { endReason: `Обаждането приключи (${req.body.CallStatus ?? "?"}).` });
     }
     res.sendStatus(204);
   });

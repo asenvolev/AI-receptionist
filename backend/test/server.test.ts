@@ -121,14 +121,6 @@ describe("Twilio webhooks", () => {
     expect(done.text).toContain("<Hangup/>");
   });
 
-  it("forgets the conversation when the call completes", async () => {
-    const { app, store } = setup();
-    const cid = await startCall(app);
-    const res = await request(app).post(`/twilio/status?cid=${cid}`).type("form").send({ CallStatus: "completed" });
-    expect(res.status).toBe(204);
-    expect(store.get(cid)).toBeUndefined();
-  });
-
   it("rejects webhooks with an invalid signature when validation is on", async () => {
     const config = { ...testConfig() };
     config.twilio = { ...config.twilio, validateSignature: true };
@@ -180,5 +172,32 @@ describe("GET /", () => {
     // A syntax error here makes the form fall back to a plain reload.
     const script = res.text.split("<script>")[1]!.split("</script>")[0]!;
     expect(() => new Function(script)).not.toThrow();
+  });
+});
+
+describe("GET /calls/:id", () => {
+  it("returns live status, transcript and the agent's outcome", async () => {
+    const { app } = setup(async (conversation) => {
+      conversation.messages.push({ role: "assistant", content: "Довиждане!" });
+      return { say: "Довиждане!", endCall: true, outcome: "Записан си във вторник в 15:00" };
+    });
+    const cid = await startCall(app);
+    expect((await request(app).get(`/calls/${cid}`)).status).toBe(401);
+    const before = await request(app).get(`/calls/${cid}`).set("Authorization", "Bearer secret");
+    expect(before.body.status).toBe("calling");
+
+    await request(app).post(`/twilio/voice?cid=${cid}`).type("form").send({});
+    await request(app).post(`/twilio/gather?cid=${cid}`).type("form").send({ SpeechResult: "Вторник в 15 става ли?" });
+    const after = await request(app).get(`/calls/${cid}`).set("Authorization", "Bearer secret");
+    expect(after.body).toMatchObject({ status: "ended", outcome: "Записан си във вторник в 15:00" });
+    expect(after.body.transcript.map((l: { speaker: string }) => l.speaker)).toEqual(["agent", "callee", "agent"]);
+  });
+
+  it("keeps the result after Twilio's status callback", async () => {
+    const { app } = setup();
+    const cid = await startCall(app);
+    await request(app).post(`/twilio/status?cid=${cid}`).type("form").send({ CallStatus: "completed" });
+    const res = await request(app).get(`/calls/${cid}`).set("Authorization", "Bearer secret");
+    expect(res.body).toMatchObject({ status: "ended", endReason: "Обаждането приключи (completed)." });
   });
 });

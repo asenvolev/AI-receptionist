@@ -1,6 +1,6 @@
 import type { Agent } from "./agent.js";
 import type { Config } from "./config.js";
-import { addCalleeTurn, type Conversation, type ConversationStore } from "./conversation.js";
+import { addCalleeTurn, finishCall, type Conversation, type ConversationStore } from "./conversation.js";
 
 /** The subset of a `ws` WebSocket the relay session uses. */
 export interface RelaySocket {
@@ -98,6 +98,10 @@ export function handleRelaySocket(ws: RelaySocket, deps: RelayDeps): void {
 
     if (reply.endCall || conversation.turns >= config.agent.maxTurns) {
       if (reply.outcome) console.log(`[relay] ${conversation.id} outcome: ${reply.outcome}`);
+      finishCall(conversation, {
+        outcome: reply.outcome,
+        endReason: reply.endCall ? "Агентът приключи разговора." : "Достигнат е лимитът от реплики.",
+      });
       endAfterSpeech(spoken, reply.outcome);
     }
   };
@@ -123,6 +127,7 @@ export function handleRelaySocket(ws: RelaySocket, deps: RelayDeps): void {
         conversation.callSid = setup.callSid ?? conversation.callSid;
         maxDurationTimer = setTimeout(() => {
           console.log(`[relay] ${conversation?.id} reached the maximum call length; ending`);
+          if (conversation) finishCall(conversation, { endReason: "Достигната е максималната продължителност." });
           send({ type: "end", handoffData: JSON.stringify({ error: "max call length" }) });
         }, deps.maxCallMs ?? MAX_CALL_MS);
         console.log(`[relay] ${conversation.id} connected (CallSid=${setup.callSid})`);

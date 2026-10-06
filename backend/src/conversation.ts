@@ -23,6 +23,20 @@ export interface Conversation {
   silentStreak?: number;
   callSid?: string;
   createdAt: number;
+  status: CallStatus;
+  /** The agent's summary from end_call, e.g. "Записан вторник 15:00". */
+  outcome?: string;
+  /** Why the call ended when there is no outcome from the agent. */
+  endReason?: string;
+}
+
+export type CallStatus = "calling" | "in-progress" | "ended";
+
+/** Marks the call as over; the first recorded outcome/reason wins. */
+export function finishCall(conversation: Conversation, details: { outcome?: string; endReason?: string }): void {
+  conversation.status = "ended";
+  conversation.outcome ??= details.outcome;
+  if (!conversation.outcome) conversation.endReason ??= details.endReason;
 }
 
 export function greetingFor(userName: string): string {
@@ -53,6 +67,7 @@ export function createConversation(task: string, userName: string): Conversation
     transcript: [{ speaker: "agent", text: greeting }],
     turns: 0,
     createdAt: Date.now(),
+    status: "calling",
   };
 }
 
