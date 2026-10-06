@@ -1,6 +1,6 @@
 import { loadConfig } from "../src/config.js";
 
-export const testConfig = () =>
+export const testConfig = (overrides: Record<string, string> = {}) =>
   loadConfig({
     ANTHROPIC_API_KEY: "sk-test",
     PUBLIC_BASE_URL: "https://example.ngrok.app/",
@@ -11,4 +11,5 @@ export const testConfig = () =>
     TEST_PHONE_NUMBER: "+359888000000",
     TWILIO_VALIDATE_SIGNATURE: "false",
     AGENT_MAX_TURNS: "3",
+    ...overrides,
   });

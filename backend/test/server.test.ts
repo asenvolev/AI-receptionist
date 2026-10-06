@@ -7,11 +7,11 @@ import { recordLog } from "../src/logs.js";
 import { createApp, type PlaceCall } from "../src/server.js";
 import { testConfig } from "./helpers.js";
 
-function setup() {
-  const config = testConfig();
+function setup(agentRespond: Agent["respond"] = vi.fn(), configOverrides: Record<string, string> = {}) {
+  const config = testConfig(configOverrides);
   const store = new ConversationStore();
   const placeCall = vi.fn<PlaceCall>(async () => ({ sid: "CA123" }));
-  const agent: Agent = { respond: vi.fn() };
+  const agent: Agent = { respond: vi.fn(agentRespond) };
   const app = createApp({ config, agent, placeCall, store });
   return { app, config, store, placeCall, agent };
 }
@@ -57,7 +57,7 @@ describe("POST /test-call", () => {
 
 describe("Twilio webhooks", () => {
   it("hands the call to ConversationRelay in Bulgarian with the AI disclosure", async () => {
-    const { app } = setup();
+    const { app } = setup(vi.fn(), { VOICE_MODE: "relay" });
     const cid = await startCall(app);
     const res = await request(app).post(`/twilio/voice?cid=${cid}`).type("form").send({});
     expect(res.type).toBe("text/xml");
@@ -67,6 +67,50 @@ describe("Twilio webhooks", () => {
     expect(res.text).toContain('welcomeGreetingInterruptible="none"');
     expect(res.text).toMatch(/welcomeGreeting="[^"]*AI асистент/);
     expect(res.text).toContain(`<Parameter name="cid" value="${cid}"/>`);
+  });
+
+  it("gather mode: opens with the disclosure and listens in Bulgarian", async () => {
+    const { app } = setup();
+    const cid = await startCall(app);
+    const res = await request(app).post(`/twilio/voice?cid=${cid}`).type("form").send({});
+    expect(res.text).toContain('<Gather input="speech" language="bg-BG"');
+    expect(res.text).toContain(`action="https://example.ngrok.app/twilio/gather?cid=${cid}"`);
+    expect(res.text).toContain('voice="Google.bg-BG-Standard-A"');
+    expect(res.text).toContain("AI асистент");
+  });
+
+  it("gather mode: answers recognized speech via the agent", async () => {
+    const { app, agent, store } = setup(async (conversation) => {
+      conversation.messages.push({ role: "assistant", content: "Във вторник?" });
+      return { say: "Във вторник?", endCall: false };
+    });
+    const cid = await startCall(app);
+    const res = await request(app)
+      .post(`/twilio/gather?cid=${cid}`)
+      .type("form")
+      .send({ SpeechResult: "Да, слушам.", Confidence: "0.9" });
+    expect(agent.respond).toHaveBeenCalledOnce();
+    expect(res.text).toContain("Във вторник?");
+    expect(res.text).toContain("<Gather");
+    expect(store.get(cid)!.transcript.at(-2)).toEqual({ speaker: "callee", text: "Да, слушам.", confidence: 0.9 });
+  });
+
+  it("gather mode: hangs up after end_call and after repeated silence", async () => {
+    const ended = setup(async () => ({ say: "Довиждане!", endCall: true }));
+    const cid = await startCall(ended.app);
+    const res = await request(ended.app).post(`/twilio/gather?cid=${cid}`).type("form").send({ SpeechResult: "Записах ви." });
+    expect(res.text).toContain("Довиждане!");
+    expect(res.text).toContain("<Hangup/>");
+
+    const silent = setup();
+    const cid2 = await startCall(silent.app);
+    for (let i = 0; i < 2; i++) {
+      const r = await request(silent.app).post(`/twilio/gather?cid=${cid2}`).type("form").send({});
+      expect(r.text).toContain("не ви чух");
+    }
+    const last = await request(silent.app).post(`/twilio/gather?cid=${cid2}`).type("form").send({});
+    expect(last.text).toContain("<Hangup/>");
+    expect(silent.agent.respond).not.toHaveBeenCalled();
   });
 
   it("hangs up for an unknown conversation and after the relay ends", async () => {

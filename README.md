@@ -6,7 +6,12 @@ AI агент, който звъни по телефона вместо теб: 
 
 `backend/` е Node + TypeScript сървър с endpoint `POST /test-call`. Той звъни на твоя номер през Twilio и води разговор на български с Claude, а ти играеш регистратурата. Целта е да проверим основния риск: доколко добре се разпознава и синтезира българска реч.
 
-Как протича едно обаждане (Twilio **ConversationRelay**):
+Има два режима (`VOICE_MODE`):
+
+- **`gather`** (по подразбиране): реплика по реплика. Twilio `<Gather>` разпознава речта, Claude отговаря, Twilio `<Say>` я чете с глас `Google.bg-BG-*`. Работи и на trial акаунт в Twilio.
+- **`relay`**: Twilio **ConversationRelay**, поточно и с прекъсване. Изисква платен акаунт в Twilio и включени *Predictive and Generative AI/ML Features* (Voice → Settings).
+
+Как протича едно обаждане в режим `relay`:
 
 1. `POST /test-call` → Twilio набира `TEST_PHONE_NUMBER` (максимум 5 минути на разговор).
 2. Когато вдигнеш, `/twilio/voice` връща `<Connect><ConversationRelay language="bg-BG">`. Twilio прочита фиксирания поздрав, в който агентът се представя като **AI асистент**. Поздравът не може да бъде прекъснат.

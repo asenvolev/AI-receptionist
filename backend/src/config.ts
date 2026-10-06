@@ -15,8 +15,16 @@ export interface Config {
     model: string;
     effort: "low" | "medium" | "high" | "xhigh" | "max";
   };
-  /** Optional ConversationRelay overrides; unset means Twilio's defaults for bg-BG. */
   voice: {
+    /**
+     * "gather": turn-based <Gather>/<Say>, works on Twilio trial accounts.
+     * "relay": ConversationRelay (streaming, interruptible); needs a paid
+     * account with the AI/ML features addendum accepted.
+     */
+    mode: "gather" | "relay";
+    /** <Say> voice for gather mode. */
+    gatherVoice: string;
+    /** Optional ConversationRelay overrides; unset means Twilio's defaults for bg-BG. */
     ttsProvider?: string;
     voice?: string;
     transcriptionProvider?: string;
@@ -69,6 +77,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       effort: effort as Config["anthropic"]["effort"],
     },
     voice: {
+      mode: env.VOICE_MODE === "relay" ? "relay" : "gather",
+      gatherVoice: env.GATHER_TTS_VOICE || "Google.bg-BG-Standard-A",
       ttsProvider: env.TTS_PROVIDER || undefined,
       voice: env.TTS_VOICE || undefined,
       transcriptionProvider: env.STT_PROVIDER || undefined,

@@ -19,6 +19,8 @@ export interface Conversation {
   turns: number;
   /** What the callee heard of the agent's last reply before talking over it. */
   pendingInterruption?: string;
+  /** Gather mode: consecutive turns where the callee said nothing. */
+  silentStreak?: number;
   callSid?: string;
   createdAt: number;
 }
