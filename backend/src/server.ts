@@ -107,7 +107,13 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
     } catch (error) {
       store.delete(conversation.id);
       console.error("[call] Twilio failed to place the call:", error);
-      res.status(502).json({ error: "failed to place call" });
+      // The caller is already authenticated, so pass Twilio's reason through.
+      const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
+      res.status(502).json({
+        error: "failed to place call",
+        ...(typeof code === "number" ? { twilioCode: code } : {}),
+        ...(typeof message === "string" ? { twilioMessage: message } : {}),
+      });
     }
   });
 

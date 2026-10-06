@@ -47,9 +47,10 @@ describe("POST /test-call", () => {
 
   it("returns 502 when Twilio fails", async () => {
     const { app, placeCall } = setup();
-    placeCall.mockRejectedValueOnce(new Error("boom"));
+    placeCall.mockRejectedValueOnce(Object.assign(new Error("The number is unverified."), { code: 21219 }));
     const res = await request(app).post("/test-call").set("Authorization", "Bearer secret").send({});
     expect(res.status).toBe(502);
+    expect(res.body).toMatchObject({ twilioCode: 21219, twilioMessage: "The number is unverified." });
   });
 });
 
