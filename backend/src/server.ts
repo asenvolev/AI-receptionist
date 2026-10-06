@@ -79,7 +79,7 @@ export function createApp({ config, placeCall, fetchTwilioAlerts, store = new Co
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
   app.use("/twilio", (req, res, next) => {
-    res.on("finish", () => console.log(`[twilio] ${req.method} /twilio${req.path} → ${res.statusCode}`));
+    res.on("finish", () => console.log(`[twilio] ${req.method} ${req.originalUrl.split("?")[0]} → ${res.statusCode}`));
     next();
   });
 
@@ -99,11 +99,21 @@ export function createApp({ config, placeCall, fetchTwilioAlerts, store = new Co
   const requireTwilioSignature = (req: Request, res: Response, next: NextFunction) => {
     if (!config.twilio.validateSignature) return next();
     const signature = req.header("X-Twilio-Signature") ?? "";
-    const fullUrl = `${config.publicBaseUrl}${req.originalUrl}`;
-    if (twilio.validateRequest(config.twilio.authToken, signature, fullUrl, req.body ?? {})) {
+    const params = { ...(req.body ?? {}) } as Record<string, string>;
+    // Twilio signs the exact URL it requested; behind a proxy that can differ
+    // from our configured base, so also accept the forwarded host.
+    const candidates = [
+      `${config.publicBaseUrl}${req.originalUrl}`,
+      `https://${req.header("x-forwarded-host") ?? req.header("host")}${req.originalUrl}`,
+    ];
+    if (candidates.some((url) => twilio.validateRequest(config.twilio.authToken, signature, url, params))) {
       return next();
     }
-    console.warn(`[twilio] rejected request with invalid signature: ${req.originalUrl}`);
+    console.warn(
+      `[twilio] rejected request with invalid signature: ${req.originalUrl} ` +
+        `(signature ${signature ? "present" : "missing"}, ${Object.keys(params).length} params, tried ${candidates.join(" | ")}). ` +
+        "Check TWILIO_AUTH_TOKEN is the primary Auth Token, or set TWILIO_VALIDATE_SIGNATURE=false for testing.",
+    );
     res.status(403).send("Invalid Twilio signature");
   };
 
