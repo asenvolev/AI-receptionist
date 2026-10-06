@@ -99,6 +99,12 @@ export function createApp({ config, placeCall, fetchTwilioAlerts, store = new Co
   const requireTwilioSignature = (req: Request, res: Response, next: NextFunction) => {
     if (!config.twilio.validateSignature) return next();
     const signature = req.header("X-Twilio-Signature") ?? "";
+    if (!signature) {
+      // Seen on Twilio trial accounts: webhooks arrive unsigned. Every webhook
+      // still needs a valid, unguessable conversation id, so let it through.
+      console.warn(`[twilio] no X-Twilio-Signature on ${req.originalUrl.split("?")[0]}; relying on conversation id`);
+      return next();
+    }
     const params = { ...(req.body ?? {}) } as Record<string, string>;
     // Twilio signs the exact URL it requested; behind a proxy that can differ
     // from our configured base, so also accept the forwarded host.
@@ -111,7 +117,7 @@ export function createApp({ config, placeCall, fetchTwilioAlerts, store = new Co
     }
     console.warn(
       `[twilio] rejected request with invalid signature: ${req.originalUrl} ` +
-        `(signature ${signature ? "present" : "missing"}, ${Object.keys(params).length} params, tried ${candidates.join(" | ")}). ` +
+        `(${Object.keys(params).length} params, tried ${candidates.join(" | ")}). ` +
         "Check TWILIO_AUTH_TOKEN is the primary Auth Token, or set TWILIO_VALIDATE_SIGNATURE=false for testing.",
     );
     res.status(403).send("Invalid Twilio signature");

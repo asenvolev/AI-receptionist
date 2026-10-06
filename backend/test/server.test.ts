@@ -92,6 +92,11 @@ describe("Twilio webhooks", () => {
     const bad = await request(app).post("/twilio/voice?cid=x").set("X-Twilio-Signature", "nope").type("form").send({ A: "1" });
     expect(bad.status).toBe(403);
 
+    // Unsigned requests pass through; the unknown conversation id still hangs up.
+    const unsigned = await request(app).post("/twilio/voice?cid=x").type("form").send({ A: "1" });
+    expect(unsigned.status).toBe(200);
+    expect(unsigned.text).toContain("<Hangup/>");
+
     const url = "https://example.ngrok.app/twilio/voice?cid=x";
     const signature = twilio.getExpectedTwilioSignature("twilio-token", url, { A: "1" });
     const good = await request(app).post("/twilio/voice?cid=x").set("X-Twilio-Signature", signature).type("form").send({ A: "1" });
