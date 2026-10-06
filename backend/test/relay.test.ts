@@ -97,6 +97,17 @@ describe("handleRelaySocket", () => {
     expect(conversation.messages.at(-1)).toEqual({ role: "assistant", content: "Разбрах." });
   });
 
+  it("ends the call after the maximum call length", async () => {
+    const store = new ConversationStore();
+    const conversation = createConversation("Задача", "Иван");
+    store.add(conversation);
+    const ws = new FakeSocket();
+    handleRelaySocket(ws, { store, agent: { respond: vi.fn() }, config: testConfig(), maxCallMs: 10 });
+    ws.receive({ type: "setup", callSid: "CA1", customParameters: { cid: conversation.id } });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(ws.sent.at(-1)).toMatchObject({ type: "end" });
+  });
+
   it("ignores partial prompts and closes politely at the turn limit", async () => {
     const { ws, agent } = setup(replying("Добре."));
     ws.receive({ type: "prompt", voicePrompt: "Сл", last: false });

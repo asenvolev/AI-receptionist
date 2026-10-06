@@ -12,9 +12,6 @@ const { VoiceResponse } = twilio.twiml;
 
 export const RELAY_PATH = "/relay";
 
-/** Hard cap on call length so a stuck call can't run up the bill. */
-const CALL_TIME_LIMIT_SECONDS = 5 * 60;
-
 export interface PlaceCallParams {
   to: string;
   from: string;
@@ -27,13 +24,21 @@ export type PlaceCall = (params: PlaceCallParams) => Promise<{ sid: string }>;
 
 export function twilioPlaceCall(config: Config["twilio"]): PlaceCall {
   const client = twilio(config.accountSid, config.authToken);
-  return (params) =>
-    client.calls.create({
-      ...params,
-      statusCallbackEvent: ["completed"],
-      statusCallbackMethod: "POST",
-      timeLimit: CALL_TIME_LIMIT_SECONDS,
-    });
+  return async ({ statusCallback, ...required }) => {
+    try {
+      return await client.calls.create({
+        ...required,
+        statusCallback,
+        statusCallbackEvent: ["completed"],
+        statusCallbackMethod: "POST",
+      });
+    } catch (error) {
+      // Trial accounts reject some optional parameters; the call works without
+      // the status callback (we only lose the end-of-call transcript log).
+      console.warn("[call] retrying without status callback:", (error as Error)?.message);
+      return client.calls.create(required);
+    }
+  };
 }
 
 export interface AppDeps {

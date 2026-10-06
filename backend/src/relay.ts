@@ -24,7 +24,11 @@ export interface RelayDeps {
   config: Config;
   /** Approximate TTS duration, used to let the goodbye finish before hanging up. */
   speechDurationMs?: (text: string) => number;
+  maxCallMs?: number;
 }
+
+/** Hard cap on call length so a stuck call can't run up the bill. */
+export const MAX_CALL_MS = 5 * 60 * 1000;
 
 const MAX_TURNS_CLOSING = "Ще трябва да приключа разговора. Благодаря ви, довиждане!";
 
@@ -42,6 +46,7 @@ export function handleRelaySocket(ws: RelaySocket, deps: RelayDeps): void {
   let conversation: Conversation | undefined;
   let generation: AbortController | undefined;
   let endTimer: NodeJS.Timeout | undefined;
+  let maxDurationTimer: NodeJS.Timeout | undefined;
   let ending = false;
 
   const send = (message: object) => ws.send(JSON.stringify(message));
@@ -116,6 +121,10 @@ export function handleRelaySocket(ws: RelaySocket, deps: RelayDeps): void {
           return;
         }
         conversation.callSid = setup.callSid ?? conversation.callSid;
+        maxDurationTimer = setTimeout(() => {
+          console.log(`[relay] ${conversation?.id} reached the maximum call length; ending`);
+          send({ type: "end", handoffData: JSON.stringify({ error: "max call length" }) });
+        }, deps.maxCallMs ?? MAX_CALL_MS);
         console.log(`[relay] ${conversation.id} connected (CallSid=${setup.callSid})`);
         return;
       }
@@ -151,5 +160,6 @@ export function handleRelaySocket(ws: RelaySocket, deps: RelayDeps): void {
   ws.on("close", () => {
     generation?.abort();
     if (endTimer) clearTimeout(endTimer);
+    if (maxDurationTimer) clearTimeout(maxDurationTimer);
   });
 }
