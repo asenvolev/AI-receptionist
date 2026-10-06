@@ -52,8 +52,8 @@ export function testCallPage(defaultTask: string): string {
       status.textContent = res.ok
         ? "✅ Обаждането тръгна. Вдигни телефона.\\nCallSid: " + body.callSid
         : "❌ Грешка " + res.status + ": " + (body.error || "неуспешно") +
-          (body.twilioCode ? "\nTwilio " + body.twilioCode + ": " + (body.twilioMessage || "") +
-            "\nhttps://www.twilio.com/docs/errors/" + body.twilioCode : "");
+          (body.twilioCode ? "\\nTwilio " + body.twilioCode + ": " + (body.twilioMessage || "") +
+            "\\nhttps://www.twilio.com/docs/errors/" + body.twilioCode : "");
     } catch (error) {
       status.textContent = "❌ Няма връзка със сървъра.";
     } finally {

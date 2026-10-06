@@ -105,5 +105,8 @@ describe("GET /", () => {
     expect(res.status).toBe(200);
     expect(res.text).toContain("Звънни ми");
     expect(res.text).not.toContain("secret");
+    // A syntax error here makes the form fall back to a plain reload.
+    const script = res.text.split("<script>")[1]!.split("</script>")[0]!;
+    expect(() => new Function(script)).not.toThrow();
   });
 });
