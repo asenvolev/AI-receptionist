@@ -66,6 +66,19 @@ export function systemPrompt(conversation: Conversation): string {
 - Когато разговорът приключи, кажи кратко сбогуване и извикай end_call в същия отговор.`;
 }
 
+/**
+ * Haiku 4.5 rejects `effort` and has no refusal fallbacks; the newer models
+ * get both (low effort keeps phone latency down).
+ */
+export function modelOptions(config: Config["anthropic"]) {
+  if (config.model.startsWith("claude-haiku")) return {};
+  return {
+    betas: ["server-side-fallback-2026-07-01"] as Anthropic.Beta.AnthropicBeta[],
+    fallbacks: "default" as const,
+    output_config: { effort: config.effort },
+  };
+}
+
 const GOODBYE_LINE = "Благодаря ви, довиждане!";
 const ERROR_LINE = "Извинете, имам технически проблем. Ще се обадим отново. Довиждане!";
 
@@ -87,9 +100,7 @@ export class ClaudeAgent implements Agent {
         {
           model: this.config.model,
           max_tokens: 4000,
-          betas: ["server-side-fallback-2026-07-01"],
-          fallbacks: "default",
-          output_config: { effort: this.config.effort },
+          ...modelOptions(this.config),
           system: systemPrompt(conversation),
           tools: [END_CALL_TOOL],
           messages: conversation.messages,

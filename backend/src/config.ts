@@ -65,7 +65,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     testPhoneNumber: required(env, "TEST_PHONE_NUMBER"),
     anthropic: {
-      model: env.ANTHROPIC_MODEL ?? "claude-opus-5-5",
+      model: env.ANTHROPIC_MODEL || "claude-haiku-4-5",
       effort: effort as Config["anthropic"]["effort"],
     },
     voice: {

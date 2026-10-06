@@ -55,6 +55,19 @@ describe("ClaudeAgent", () => {
     });
   });
 
+  it("omits effort and fallbacks for Haiku", async () => {
+    const { client, stream } = fakeClient([], {
+      stop_reason: "end_turn",
+      content: [{ type: "text", text: "Да.", citations: null }] as unknown as Anthropic.Beta.BetaContentBlock[],
+    });
+    await new ClaudeAgent({ model: "claude-haiku-4-5", effort: "low" }, client).respond(conversationWithCallee(), options().opts);
+    const params = stream.mock.calls[0]![0] as Record<string, unknown>;
+    expect(params.model).toBe("claude-haiku-4-5");
+    expect(params).not.toHaveProperty("output_config");
+    expect(params).not.toHaveProperty("fallbacks");
+    expect(params).not.toHaveProperty("betas");
+  });
+
   it("detects end_call with its outcome", async () => {
     const { client } = fakeClient(["Довиждане!"], {
       stop_reason: "tool_use",
