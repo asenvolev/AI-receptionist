@@ -24,6 +24,8 @@ export interface Config {
     mode: "gather" | "relay";
     /** <Say> voice for gather mode. */
     gatherVoice: string;
+    /** Gather mode: seconds of silence that end the callee's turn, or "auto". */
+    gatherSpeechTimeout: string;
     /** Optional ConversationRelay overrides; unset means Twilio's defaults for bg-BG. */
     ttsProvider?: string;
     voice?: string;
@@ -79,6 +81,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voice: {
       mode: env.VOICE_MODE === "relay" ? "relay" : "gather",
       gatherVoice: env.GATHER_TTS_VOICE || "Google.bg-BG-Standard-A",
+      gatherSpeechTimeout: env.GATHER_SPEECH_TIMEOUT || "2",
       ttsProvider: env.TTS_PROVIDER || undefined,
       voice: env.TTS_VOICE || undefined,
       transcriptionProvider: env.STT_PROVIDER || undefined,

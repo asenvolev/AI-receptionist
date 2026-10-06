@@ -77,6 +77,8 @@ describe("Twilio webhooks", () => {
     expect(res.text).toContain(`action="https://example.ngrok.app/twilio/gather?cid=${cid}"`);
     expect(res.text).toContain('voice="Google.bg-BG-Standard-A"');
     expect(res.text).toContain("AI асистент");
+    expect(res.text).toContain('bargeIn="false"');
+    expect(res.text).toContain('speechTimeout="2"');
   });
 
   it("gather mode: answers recognized speech via the agent", async () => {

@@ -122,7 +122,11 @@ export function createApp({ config, agent, placeCall, fetchTwilioAlerts, store =
       action: url("/twilio/gather", conversation.id),
       method: "POST",
       actionOnEmptyResult: true,
-      speechTimeout: "auto",
+      // Let the agent's line play to the end: Twilio can't tell us how much of
+      // it was heard if the callee talks over it, and Claude would assume all of it.
+      bargeIn: false,
+      // Seconds of silence that end the callee's turn; "auto" cut people off mid-thought.
+      speechTimeout: config.voice.gatherSpeechTimeout,
       ...(config.voice.hints ? { hints: config.voice.hints } : {}),
     });
     gather.say(sayAttributes, text);
