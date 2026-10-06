@@ -1,7 +1,9 @@
 import { ClaudeAgent } from "./agent.js";
 import { loadConfig } from "./config.js";
+import { captureConsole } from "./logs.js";
 import { createAppServer, RELAY_PATH, twilioPlaceCall } from "./server.js";
 
+captureConsole();
 const config = loadConfig();
 const server = createAppServer({
   config,

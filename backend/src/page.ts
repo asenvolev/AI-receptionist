@@ -19,6 +19,7 @@ export function testCallPage(defaultTask: string): string {
   button { margin-top: 20px; background: #2563eb; color: #fff; border: 0; font-weight: 600; }
   button:disabled { opacity: .6; }
   #status { margin-top: 16px; white-space: pre-wrap; }
+  #logs { margin-top: 8px; min-height: 320px; font: 12px/1.4 ui-monospace, monospace; white-space: pre; }
 </style>
 </head>
 <body>
@@ -32,9 +33,25 @@ export function testCallPage(defaultTask: string): string {
   <button id="go" type="submit">Звънни ми</button>
 </form>
 <div id="status"></div>
+<label for="logs">Логове на сървъра (обновяват се на всеки 3 секунди)</label>
+<textarea id="logs" readonly placeholder="Въведи token, за да виждаш логовете."></textarea>
 <script>
   const token = document.getElementById("token");
   try { token.value = localStorage.getItem("testCallToken") || ""; } catch {}
+  const logs = document.getElementById("logs");
+  async function refreshLogs() {
+    if (!token.value) return;
+    try {
+      const res = await fetch("/logs", { headers: { Authorization: "Bearer " + token.value } });
+      if (res.status === 401) { logs.value = "Грешен token."; return; }
+      const body = await res.json();
+      const atBottom = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 20;
+      logs.value = body.lines.join("\\n");
+      if (atBottom) logs.scrollTop = logs.scrollHeight;
+    } catch {}
+  }
+  refreshLogs();
+  setInterval(refreshLogs, 3000);
   document.getElementById("form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = document.getElementById("go");

@@ -3,6 +3,7 @@ import twilio from "twilio";
 import { describe, expect, it, vi } from "vitest";
 import type { Agent } from "../src/agent.js";
 import { ConversationStore } from "../src/conversation.js";
+import { recordLog } from "../src/logs.js";
 import { createApp, type PlaceCall } from "../src/server.js";
 import { testConfig } from "./helpers.js";
 
@@ -95,6 +96,17 @@ describe("Twilio webhooks", () => {
     const signature = twilio.getExpectedTwilioSignature("twilio-token", url, { A: "1" });
     const good = await request(app).post("/twilio/voice?cid=x").set("X-Twilio-Signature", signature).type("form").send({ A: "1" });
     expect(good.status).toBe(200);
+  });
+});
+
+describe("GET /logs", () => {
+  it("requires the token and returns recent lines", async () => {
+    const { app } = setup();
+    recordLog("log", ["[test] hello"]);
+    expect((await request(app).get("/logs")).status).toBe(401);
+    const res = await request(app).get("/logs").set("Authorization", "Bearer secret");
+    expect(res.status).toBe(200);
+    expect(res.body.lines.at(-1)).toMatch(/\[test\] hello$/);
   });
 });
 

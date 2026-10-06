@@ -5,6 +5,7 @@ import { WebSocketServer } from "ws";
 import type { Agent } from "./agent.js";
 import type { Config } from "./config.js";
 import { ConversationStore, createConversation } from "./conversation.js";
+import { recentLogs } from "./logs.js";
 import { testCallPage } from "./page.js";
 import { handleRelaySocket } from "./relay.js";
 
@@ -53,6 +54,10 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
   app.disable("x-powered-by");
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+  app.use("/twilio", (req, res, next) => {
+    res.on("finish", () => console.log(`[twilio] ${req.method} /twilio${req.path} → ${res.statusCode}`));
+    next();
+  });
 
   const url = (path: string, conversationId: string) =>
     `${config.publicBaseUrl}${path}?cid=${encodeURIComponent(conversationId)}`;
@@ -86,8 +91,19 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
     res.json({ ok: true });
   });
 
+  const isAuthorized = (req: Request) => req.header("Authorization") === `Bearer ${config.testCallToken}`;
+
+  // Logs can contain call transcripts, so they need the same token.
+  app.get("/logs", (req, res) => {
+    if (!isAuthorized(req)) {
+      res.status(401).json({ error: "unauthorized" });
+      return;
+    }
+    res.json({ lines: recentLogs() });
+  });
+
   app.post("/test-call", async (req, res) => {
-    if (req.header("Authorization") !== `Bearer ${config.testCallToken}`) {
+    if (!isAuthorized(req)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
