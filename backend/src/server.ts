@@ -126,6 +126,7 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
   app.post("/twilio/voice", requireTwilioSignature, (req, res) => {
     const conversation = store.get(req.query.cid as string | undefined);
     if (!conversation) {
+      console.warn(`[call] /twilio/voice for unknown conversation ${req.query.cid}; hanging up`);
       sendTwiml(res, hangUp());
       return;
     }
@@ -147,6 +148,7 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
       ...(config.voice.hints ? { hints: config.voice.hints } : {}),
     });
     relay.parameter({ name: "cid", value: conversation.id });
+    console.log(`[call] ${conversation.id} answered; connecting ConversationRelay to ${config.publicBaseUrl.replace(/^http/, "ws")}${RELAY_PATH}`);
     sendTwiml(res, twiml);
   });
 
@@ -183,6 +185,9 @@ export function createAppServer(deps: AppDeps): Server {
   const wss = new WebSocketServer({ server, path: RELAY_PATH });
   // The socket is only useful with a valid conversation id, which is an
   // unguessable UUID that Twilio receives from our signed webhook response.
-  wss.on("connection", (ws) => handleRelaySocket(ws, { store, agent: deps.agent, config: deps.config }));
+  wss.on("connection", (ws, req) => {
+    console.log(`[relay] WebSocket connected from ${req.headers["x-forwarded-for"] ?? req.socket.remoteAddress}`);
+    handleRelaySocket(ws, { store, agent: deps.agent, config: deps.config });
+  });
   return server;
 }
