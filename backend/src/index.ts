@@ -1,7 +1,7 @@
 import { ClaudeAgent } from "./agent.js";
 import { loadConfig } from "./config.js";
 import { captureConsole } from "./logs.js";
-import { createAppServer, RELAY_PATH, twilioPlaceCall } from "./server.js";
+import { createAppServer, RELAY_PATH, twilioFetchAlerts, twilioPlaceCall } from "./server.js";
 
 captureConsole();
 const config = loadConfig();
@@ -9,6 +9,7 @@ const server = createAppServer({
   config,
   agent: new ClaudeAgent(config.anthropic),
   placeCall: twilioPlaceCall(config.twilio),
+  fetchTwilioAlerts: twilioFetchAlerts(config.twilio),
 });
 
 server.listen(config.port, () => {

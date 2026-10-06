@@ -42,14 +42,38 @@ export function twilioPlaceCall(config: Config["twilio"]): PlaceCall {
   };
 }
 
+/** Recent errors/warnings from Twilio's debugger, formatted as text lines. */
+export type FetchTwilioAlerts = () => Promise<string[]>;
+
+const ALERTS_CACHE_MS = 15_000;
+
+export function twilioFetchAlerts(config: Config["twilio"]): FetchTwilioAlerts {
+  const client = twilio(config.accountSid, config.authToken);
+  let cache: { at: number; lines: string[] } | undefined;
+  return async () => {
+    if (cache && Date.now() - cache.at < ALERTS_CACHE_MS) return cache.lines;
+    const alerts = await client.monitor.v1.alerts.list({ limit: 10 });
+    const lines = alerts.map((alert) => {
+      // alertText is URL-encoded key=value pairs; "Msg" holds the human-readable part.
+      const text = new URLSearchParams(alert.alertText ?? "");
+      const message = text.get("Msg") ?? text.get("msg") ?? alert.alertText;
+      const time = alert.dateCreated?.toISOString().replace("T", " ").slice(0, 19);
+      return `${time} ${alert.logLevel ?? ""} ${alert.errorCode}: ${message} (https://www.twilio.com/docs/errors/${alert.errorCode})`;
+    });
+    cache = { at: Date.now(), lines };
+    return lines;
+  };
+}
+
 export interface AppDeps {
   config: Config;
   agent: Agent;
   placeCall: PlaceCall;
+  fetchTwilioAlerts?: FetchTwilioAlerts;
   store?: ConversationStore;
 }
 
-export function createApp({ config, placeCall, store = new ConversationStore() }: AppDeps) {
+export function createApp({ config, placeCall, fetchTwilioAlerts, store = new ConversationStore() }: AppDeps) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json());
@@ -94,12 +118,20 @@ export function createApp({ config, placeCall, store = new ConversationStore() }
   const isAuthorized = (req: Request) => req.header("Authorization") === `Bearer ${config.testCallToken}`;
 
   // Logs can contain call transcripts, so they need the same token.
-  app.get("/logs", (req, res) => {
+  app.get("/logs", async (req, res) => {
     if (!isAuthorized(req)) {
       res.status(401).json({ error: "unauthorized" });
       return;
     }
-    res.json({ lines: recentLogs() });
+    let twilioAlerts: string[] | undefined;
+    if (fetchTwilioAlerts) {
+      try {
+        twilioAlerts = await fetchTwilioAlerts();
+      } catch (error) {
+        twilioAlerts = [`(не успях да взема грешките от Twilio: ${(error as Error)?.message})`];
+      }
+    }
+    res.json({ lines: recentLogs(), twilioAlerts });
   });
 
   app.post("/test-call", async (req, res) => {

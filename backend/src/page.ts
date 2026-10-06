@@ -33,7 +33,7 @@ export function testCallPage(defaultTask: string): string {
   <button id="go" type="submit">Звънни ми</button>
 </form>
 <div id="status"></div>
-<label for="logs">Логове на сървъра (обновяват се на всеки 3 секунди)</label>
+<label for="logs">Логове: грешки от Twilio + сървър (обновяват се сами)</label>
 <textarea id="logs" readonly placeholder="Въведи token, за да виждаш логовете."></textarea>
 <script>
   const token = document.getElementById("token");
@@ -46,7 +46,10 @@ export function testCallPage(defaultTask: string): string {
       if (res.status === 401) { logs.value = "Грешен token."; return; }
       const body = await res.json();
       const atBottom = logs.scrollTop + logs.clientHeight >= logs.scrollHeight - 20;
-      logs.value = body.lines.join("\\n");
+      const alerts = body.twilioAlerts && body.twilioAlerts.length
+        ? "=== Последни грешки от Twilio ===\\n" + body.twilioAlerts.join("\\n") + "\\n\\n"
+        : "";
+      logs.value = alerts + "=== Сървър ===\\n" + body.lines.join("\\n");
       if (atBottom) logs.scrollTop = logs.scrollHeight;
     } catch {}
   }

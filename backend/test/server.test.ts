@@ -108,6 +108,17 @@ describe("GET /logs", () => {
     expect(res.status).toBe(200);
     expect(res.body.lines.at(-1)).toMatch(/\[test\] hello$/);
   });
+
+  it("includes Twilio debugger alerts when available", async () => {
+    const app = createApp({
+      config: testConfig(),
+      agent: { respond: vi.fn() },
+      placeCall: vi.fn(),
+      fetchTwilioAlerts: async () => ["2026-10-06 error 64101: WebSocket failed"],
+    });
+    const res = await request(app).get("/logs").set("Authorization", "Bearer secret");
+    expect(res.body.twilioAlerts).toEqual(["2026-10-06 error 64101: WebSocket failed"]);
+  });
 });
 
 describe("GET /", () => {
